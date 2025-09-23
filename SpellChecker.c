@@ -2,7 +2,6 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-
 #include "Distance.h"
 #include <string.h>
 
@@ -10,31 +9,72 @@
 static void lowercase(char *s){
     for (; *s; ++s) *s = (char)tolower((unsigned char)*s);
 }
+
+// method to trim strings
+static void trim(char *s) {
+    s[strcspn(s, "\r\n")] = '\0';
+}
+
+// Dynamic array (resizable) for dictionary words
+typedef struct {
+    char **w;     // pointer to array of strings
+    size_t n;     // number of words currently stored
+    size_t cap;   // allocated capacity
+} WordList;
+
+// Push a new word into the WordList
+static void wl_push(WordList *wl, const char *word){
+    // Grow array if full
+    if (wl->n == wl->cap){
+        wl->cap = wl->cap ? wl->cap * 2 : 1024; // start at 1024, double each time
+        wl->w = realloc(wl->w, wl->cap * sizeof *wl->w);
+        if (!wl->w){ perror("realloc"); exit(1); }
+    }
+    // Duplicate string so it has its own storage
+    wl->w[wl->n++] = strdup(word);
+}
+
+
+
+
 int main() {
-    FILE *fp = fopen("aspell-english-common.txt", "r");
+    // user inputs a file to read from
+    char fileName[999];
+    printf("\nEnter a word list to use: ");
+    scanf("%s", fileName);
+    FILE *fp = fopen(fileName, "r");
     if (fp == NULL) {
         perror("Error opening file");
         return 1;
     }
 
-    // Array of strings
+
+    WordList dict = {0};
+    char line[46];
+
+
+    // Array of strings - closest matches ; User input string
     char results[20][46] = {{0}};
-    char d1stor[20][46] = {{0}};
-    char d2stor[20][46] = {{0}};
-    char d3stor[20][46] = {{0}};
-
-    // Ints for tracking
-    int dist1, dist2, dist3, hits = 0;
-
-    // Strings
-    char dictWord[46];
     char userString[46];
 
-    while (1) {
+    // Read the file & fill the in-code dictionary
+    while (fgets(line, sizeof line, fp)){
+        trim(line);
+        lowercase(line);
+        if (*line == '\0') continue;
+        wl_push(&dict, line);
+    }
+    fclose(fp);
 
+    // begin spelling
+    while (1) {
         printf("\nEnter a word to spellcheck, or exit: ");
         scanf("%s", userString);
         lowercase(userString);
+
+        // values for filling and printing
+        int lowest = 99;
+        int tracker = 0;
 
         // if input = exit, exit
         if (_stricmp(userString, "exit") == 0) {
@@ -45,85 +85,51 @@ int main() {
         // reset between inputs
         bool match = false;
         memset(results, 0, sizeof(results));
-        memset(d1stor, 0, sizeof(d1stor));
-        memset(d2stor, 0, sizeof(d2stor));
-        memset(d3stor, 0, sizeof(d3stor));
-        dist1 = dist2 = dist3 = hits = 0;
-        rewind(fp);
 
 
         // if input != exit
-        if (_stricmp(userString, "exit") != 0) {
-            while (fgets(dictWord, 46, fp) != NULL) {
-                // get the string, and remove \n from the char array
-                dictWord[strcspn(dictWord, "\r\n")] = '\0';
+        for (size_t i = 0; i < dict.n; ++i) {
+            const char *dictWord = dict.w[i];
 
-                // make copies so difference() doesn't mess up originals
-                char a[46], b[46];
-                strcpy(a, userString), strcpy(b, dictWord);
-                lowercase(a);
-                lowercase(b);
+            // make copies so difference() doesn't mess up originals
+            char a[46], b[46];
+            strcpy(a, userString), strcpy(b, dictWord);
+            lowercase(a);
+            lowercase(b);
 
-                // get the # of substitutions to match input and dictionary words
-                int x = difference(a,b,0,0);
+            // get the # of substitutions to match input and dictionary words
+            int x = difference(a,b,0,0);
 
-                // if word is spelled correctly
-                if ( x == 0) {
-                    match = true;
-                    memset(results, 0, sizeof(results));
-                    printf("'%s' is spelled correctly", userString);
-                    break;
-                }
-
-                // Fill respective arrays based on distance
-
-                if ( x == 1 && dist1 < 20) {
-                    strncpy(d1stor[dist1],dictWord,46);
-                    d1stor[dist1][46] = '\0';
-                    dist1++;
-                }
-
-                if ( x == 2 && dist2 < 20) {
-                    strncpy(d2stor[dist2],dictWord,46);
-                    d2stor[dist2][46] = '\0';
-                    dist2++;
-                }
-                if ( x == 3 && dist3 < 20) {
-                    strncpy(d3stor[dist3],dictWord,46);
-                    d3stor[dist3][46] = '\0';
-                    dist3++;
-                }
+            // if word is spelled correctly
+            if ( x == 0) {
+                match = true;
+                memset(results, 0, sizeof(results));
+                printf("'%s' is spelled correctly", userString);
+                break;
             }
 
-            // if input was not spelled correctly, print up to 20 suggestions
-            if (match == false) {
-                // copy up to first 20 of 'only 1 substitution' to results
-                for (int i = 0; i <= dist1 && i<20; i++) {
-                    strncpy(results[i], d1stor[i],46);
-                }
+            // if a new closest match is found, throw out old and start filling
+            if ( x < lowest) {
+                lowest = x;
+                memset(results, 0, sizeof(results));
+                tracker = 0;
+                strncpy(results[tracker],dictWord,46);
+                results[tracker][45] = '\0';
+                tracker++;
+            }
 
-                // if there wasn't 20 of 'only 1 substitution', start adding 'only 2'
-                if (dist1 < 20) {
-                    for (int i = dist1; i <= (dist1 + dist2) && i<20; i++) {
-                        strncpy(results[i], d2stor[i],46);
-                    }
-                }
-                // if there wasn't 20 of 'only 1 & 2 substitutions', start adding 'only 3'
-                if ((dist1 + dist2) < 20) {
-                    for (int i = (dist1 + dist2); i <= (dist1 + dist2 + dist3) && i<20; i++) {
-                        strncpy(results[i], d3stor[i],46);
-                    }
-                }
+            // if word is as close as the rest, continue filling
+            if ( x == lowest && tracker < 20) {
+                strncpy(results[tracker],dictWord,46);
+                results[tracker][45] = '\0';
+                tracker++;
+            }
+        }
 
-                // if there was more than 20 total subs, only fill the list to 20;
-                //  otherwise, fill the list with what was collected.
-                if ((dist1 + dist2 + dist3) >= 20) {
-                    hits = 20;
-                } else hits = (dist1 + dist2 + dist3);
-                printf("Similar words:\n");
-                for (int i = 0; i < hits; i++) {
-                    puts(results[i]);
-                }
+        // at the end, if the word was spelled wrong, print out the closest options
+        if (!match) {
+            for (int i = 0; i < tracker; ++i) {
+                puts(results[i]);
             }
         }
     }
